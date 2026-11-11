@@ -5,6 +5,7 @@ plugins {
 android {
     namespace = "io.github.anemonastrum.strelitzia"
     compileSdk = 37
+    buildToolsVersion = "36.0.0"
     defaultConfig {
         applicationId = "io.github.anemonastrum.strelitzia"
         minSdk = 33

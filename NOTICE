@@ -1,0 +1,13 @@
+Strelitzia
+Copyright 2026 Anemonastrum
+
+Uses Glasmio by NEORUAA, Apache License 2.0:
+https://github.com/NEORUAA/Glasmio
+Glasmio libraries include their own legal resources and third-party notices.
+
+Visual inspiration: MeiloX (GPL-3.0 project)
+https://github.com/MeiloX/MeiloX
+No MeiloX source code or assets are included.
+
+AndroidX/Compose, Kotlin and other transitive dependencies retain their own licenses.
+No Apple fonts or symbols font files are bundled.
