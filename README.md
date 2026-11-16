@@ -37,7 +37,7 @@ echo 2515000 > /sys/devices/system/cpu/cpufreq/policy7/scaling_max_freq
 
 Policies with missing supported lists or bounds are read-only. Unsupported preset values disable the preset; no silent rounding or policy substitution. Targets below the current minimum or outside hardware bounds are rejected. Root subprocesses have a 15-second timeout and a 64 KiB output limit per stream.
 
-Preset writes are **not atomic**. On failure, remaining writes stop and attempted policies are restored to their prior caps when current validation permits. Every observed value and restore failure is reported. If a timeout or restore error occurs, inspect current caps before retrying. External power services can race with any userspace app.
+Preset writes are **not atomic**. On failure, remaining writes stop and attempted policies are restored to their prior caps when current validation permits. Every observed value and restore failure is reported. If a root command times out, exceeds its output limit, or loses its I/O channel, its completion is **indeterminate**: killing the `su` launcher cannot prove a daemon-owned command stopped. Strelitzia blocks all further root commands for that app session and skips rollback rather than racing unfinished work. **Reboot the phone before retrying; restarting the app alone does not establish safety.** Inspect current caps after reboot. Other restore errors are reported per policy. External power services can race with any userspace app.
 
 **Restore session caps** uses the first readable cap per policy after connecting root in the current app process. It is not a factory reset. Restarting the app process forgets this baseline. Reboot behavior belongs to your kernel/root manager, not Strelitzia.
 

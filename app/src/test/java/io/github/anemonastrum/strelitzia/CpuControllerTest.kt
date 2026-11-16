@@ -75,6 +75,24 @@ class CpuControllerTest {
         val report = c.apply(mapOf(0 to 1286000L))
         assertFalse(report.success); assertTrue(report.details.contains("1920000")); assertEquals(2515000L, d.caps[0])
     }
+    @Test fun indeterminateWriteBlocksRollbackAndLaterWrites() {
+        val d = Device()
+        var commands = 0
+        val c = CpuController({ command ->
+            commands++
+            if (command.contains(" > ")) ShellResult(-2, "", "state indeterminate") else d.execute(command)
+        }, d::read, { d.caps.keys.toList() })
+        c.connect()
+        val report = c.apply(PRESET)
+        assertFalse(report.success)
+        assertTrue(report.details.contains("indeterminate"))
+        assertFalse(c.connected)
+        val before = commands
+        assertFalse(c.apply(PRESET).success)
+        assertFalse(c.restoreSession().success)
+        assertFalse(c.connect())
+        assertEquals(before, commands)
+    }
     @Test fun restoreUsesSessionBaselineNotLastRefresh() {
         val d = Device(); val c = d.controller(); c.connect(); c.refresh()
         c.apply(mapOf(0 to 1286000L)); c.refresh()

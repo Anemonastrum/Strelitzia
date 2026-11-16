@@ -42,6 +42,7 @@ class KernelViewModel(application: Application) : AndroidViewModel(application) 
     fun refresh() = operate { null }
     fun connect() = operate {
         if (controller.connect()) "Root connected. Changes require confirmation."
+        else if (controller.indeterminate) "Root state indeterminate. Commands blocked. Reboot device before retrying."
         else "Root denied or unavailable. Grant access in your root manager, then retry."
     }
     fun apply(targets: Map<Int, Long>) = operate { controller.apply(targets).let { (if (it.success) "Verified\n" else "Not applied successfully\n") + it.details } }

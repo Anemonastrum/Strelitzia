@@ -2,9 +2,7 @@ package io.github.anemonastrum.strelitzia
 
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
-import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
 
 data class ShellResult(val exitCode: Int, val stdout: String, val stderr: String)
 
@@ -12,48 +10,49 @@ class RootShell(
     private val timeoutMs: Long = 15_000,
     private val launch: (String) -> Process = { ProcessBuilder("su", "-c", it).start() },
 ) {
-    fun run(command: String): ShellResult {
+    private var blocked = false
+
+    @Synchronized fun run(command: String): ShellResult {
+        if (blocked) return ShellResult(-2, "", "Root commands blocked: prior command state indeterminate. Reboot device before retrying.")
         val process = try { launch(command) } catch (e: Exception) {
             return ShellResult(-1, "", e.message ?: "Cannot start su")
         }
-        val overflow = AtomicBoolean(false)
-        val pool = Executors.newFixedThreadPool(2) { r -> Thread(r, "root-output").apply { isDaemon = true } }
-        fun collect(input: InputStream): String {
-            val result = ByteArrayOutputStream()
-            val buffer = ByteArray(4096)
-            input.use {
-                while (true) {
-                    val size = it.read(buffer)
-                    if (size < 0) break
-                    val allowed = minOf(size, 65536 - result.size())
-                    result.write(buffer, 0, allowed)
-                    if (allowed < size) { overflow.set(true); process.destroyForcibly(); break }
-                }
+        val out = ByteArrayOutputStream()
+        val err = ByteArrayOutputStream()
+        val buffer = ByteArray(4096)
+        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
+        fun drain(input: InputStream, destination: ByteArrayOutputStream) {
+            // Poll only bytes already available: descendants may retain pipes after su exits.
+            while (input.available() > 0) {
+                if (System.nanoTime() >= deadline) throw java.io.IOException("Root command timed out")
+                val size = input.read(buffer, 0, minOf(buffer.size, input.available()))
+                if (size <= 0) break
+                if (destination.size() + size > 65536) throw java.io.IOException("Root output exceeded 64 KiB")
+                destination.write(buffer, 0, size)
             }
-            return result.toString("UTF-8")
         }
-        val out = pool.submit<String> { collect(process.inputStream) }
-        val err = pool.submit<String> { collect(process.errorStream) }
         try {
             process.outputStream.close()
-            if (!process.waitFor(timeoutMs, TimeUnit.MILLISECONDS)) {
-                process.destroyForcibly()
-                return ShellResult(-1, "", "Root command timed out; inspect current caps before retrying")
+            while (true) {
+                drain(process.inputStream, out)
+                drain(process.errorStream, err)
+                if (process.waitFor(10, TimeUnit.MILLISECONDS)) {
+                    drain(process.inputStream, out)
+                    drain(process.errorStream, err)
+                    return ShellResult(process.exitValue(), out.toString("UTF-8"), err.toString("UTF-8"))
+                }
+                if (System.nanoTime() >= deadline) throw java.io.IOException("Root command timed out")
             }
-            val stdout = out.get(1, TimeUnit.SECONDS)
-            val stderr = err.get(1, TimeUnit.SECONDS)
-            return if (overflow.get()) ShellResult(-1, stdout, "Root output exceeded 64 KiB")
-            else ShellResult(process.exitValue(), stdout, stderr)
         } catch (e: Exception) {
             if (e is InterruptedException) Thread.currentThread().interrupt()
-            return ShellResult(-1, "", e.message ?: "Root command failed")
+            // Killing su does not prove its daemon-owned privileged command has stopped.
+            blocked = true
+            return ShellResult(-2, out.toString("UTF-8"), "${e.message ?: "Root command failed"}; state indeterminate. Root commands blocked. Reboot device before retrying.")
         } finally {
             process.destroyForcibly()
-            out.cancel(true); err.cancel(true)
             runCatching { process.inputStream.close() }
             runCatching { process.errorStream.close() }
             runCatching { process.outputStream.close() }
-            pool.shutdownNow()
         }
     }
 }

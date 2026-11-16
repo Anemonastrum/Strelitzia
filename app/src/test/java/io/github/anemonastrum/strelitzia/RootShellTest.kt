@@ -21,6 +21,15 @@ class RootShellTest {
         assertNotEquals(0, r.exitCode); assertTrue(r.stderr.contains("timed out"))
         assertTrue((System.nanoTime() - start) / 1_000_000 < 3000)
     }
+    @Test fun childTimeoutLocksSessionWithoutReaderLeak() {
+        val root = shell(100)
+        val before = Thread.getAllStackTraces().keys.count { it.name == "root-output" && it.isAlive }
+        val result = root.run("sleep 2 & wait")
+        assertNotEquals(0, result.exitCode)
+        assertTrue(result.stderr.contains("indeterminate"))
+        assertTrue(root.run("printf unsafe").stderr.contains("blocked"))
+        assertEquals(before, Thread.getAllStackTraces().keys.count { it.name == "root-output" && it.isAlive })
+    }
     @Test fun floodIsBoundedAndNotSuccessful() {
         val r = shell().run("yes x")
         assertNotEquals(0, r.exitCode)

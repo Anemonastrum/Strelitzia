@@ -18,9 +18,18 @@ class CpuController(
     var connected = false
         private set
     private val baseline = linkedMapOf<Int, Long>()
+    var indeterminate = false
+        private set
+
+    private fun runRoot(command: String): ShellResult {
+        if (indeterminate) return ShellResult(-2, "", "Root commands blocked; state indeterminate. Reboot device before retrying.")
+        return shell(command).also {
+            if (it.exitCode == -2) { indeterminate = true; connected = false }
+        }
+    }
 
     @Synchronized fun connect(): Boolean {
-        val result = shell("id -u")
+        val result = runRoot("id -u")
         connected = result.exitCode == 0 && result.stdout.trim() == "0"
         if (connected) refresh()
         return connected
@@ -32,7 +41,7 @@ class CpuController(
         val path = "${policyPath(id)}/$field"
         readFile(path)?.let { return it.trim() }
         if (!connected) return null
-        val result = shell("cat $path")
+        val result = runRoot("cat $path")
         return result.stdout.trim().takeIf { result.exitCode == 0 }
     }
 
@@ -45,7 +54,7 @@ class CpuController(
     @Synchronized fun refresh(): List<CpuPolicy> {
         var ids = listPolicies().filter { it >= 0 }.distinct().sorted()
         if (ids.isEmpty() && connected) {
-            val result = shell("printf '%s\n' $CPU_BASE/policy[0-9]*")
+            val result = runRoot("printf '%s\n' $CPU_BASE/policy[0-9]*")
             if (result.exitCode == 0) ids = result.stdout.lineSequence().mapNotNull {
                 Regex("${Regex.escape(CPU_BASE)}/policy([0-9]+)").matchEntire(it)?.groupValues?.get(1)?.toIntOrNull()
             }.distinct().sorted().toList()
@@ -58,7 +67,7 @@ class CpuController(
 
     private fun write(id: Int, khz: Long): ShellResult {
         require(khz > 0)
-        return shell("printf '%s\n' $khz > ${policyPath(id)}/scaling_max_freq")
+        return runRoot("printf '%s\n' $khz > ${policyPath(id)}/scaling_max_freq")
     }
 
     @Synchronized fun apply(targets: Map<Int, Long>): ApplyReport {
@@ -80,7 +89,7 @@ class CpuController(
             if (fresh.maxKhz == value) { details += "policy$id already $value kHz"; continue }
             attempted += id
             val result = write(id, value)
-            val observed = read(id, "scaling_max_freq")?.toLongOrNull()
+            val observed = if (indeterminate) null else read(id, "scaling_max_freq")?.toLongOrNull()
             details += "policy$id requested $value kHz; observed ${observed ?: "unavailable"} kHz"
             if (result.exitCode != 0 || observed != value) {
                 failure = "policy$id failed: ${result.stderr.ifBlank { "read-back mismatch" }}"
@@ -89,6 +98,7 @@ class CpuController(
         }
         if (failure != null) {
             details += failure
+            if (indeterminate) return ApplyReport(false, (details + "State indeterminate: rollback skipped. Root commands blocked. Reboot device before retrying.").joinToString("\n"))
             for (id in attempted.asReversed()) {
                 val old = current.getValue(id).maxKhz!!
                 val fresh = policy(id)
@@ -96,7 +106,7 @@ class CpuController(
                 if (unsafe != null) { details += "policy$id restore failed: $unsafe"; continue }
                 if (fresh.maxKhz == old) { details += "policy$id restored: already $old kHz"; continue }
                 val result = write(id, old)
-                val observed = read(id, "scaling_max_freq")?.toLongOrNull()
+                val observed = if (indeterminate) null else read(id, "scaling_max_freq")?.toLongOrNull()
                 details += if (result.exitCode == 0 && observed == old) "policy$id restored to $old kHz"
                 else "policy$id restore failed; observed ${observed ?: "unavailable"} kHz: ${result.stderr}"
             }
